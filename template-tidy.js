@@ -1,6 +1,7 @@
 'use strict';
 
-// Shorcuts!
+require('colors');
+
 var Translations = require('./lib/translations.js');
 var PotAdapter = require('./lib/pot-adapter.js');
 var JsonAdapter = require('./lib/json-adapter.js');
@@ -169,10 +170,12 @@ exports.existingTranslations = function() {
     return all;
 
     function foundKey(key) {
-        var found = { maybe: false, found: false, missing:true },
-            prefix = key.split('.')[0] + '.';
+        var found = { maybe: false, found: false, missing:true, knownString: false, knownPrefix: false },
+            keyParts = key.split('.'),
+            prefix = keyParts.length>1? keyParts[0] + '.' : '';
 
         templates.forEach(function(content) {
+            if (prefix && content.indexOf(prefix) >= 0) found.knownPrefix = true;
             if (content.indexOf(key) >= 0) found.knownString = true;
             if (content.indexOf('>'+ key +'<') >= 0 ||
                 content.indexOf('"'+ key +'"') >= 0 ||
@@ -180,11 +183,13 @@ exports.existingTranslations = function() {
                 content.indexOf("'"+ key +"'") >= 0) found.maybe = true;
         });
         js.forEach(function(content) {
+            if (prefix && content.indexOf(prefix) >= 0) found.knownPrefix = true;
             if (content.indexOf(key) >= 0) found.knownString = true;
             if (content.indexOf('"'+ key +'"') >= 0 ||
                 content.indexOf("'"+ key +"'") >= 0) found.maybe = true;
         });
 
+        found.unknownPrefix = !found.knownPrefix ? keyParts.length>1 : false;
         found.found = translation.isFoundKey(key);
         found.unknown = !found.knownString; // key wasn't found at all
         found.missing = !found.maybe; // doesn't seem to be in the right places
