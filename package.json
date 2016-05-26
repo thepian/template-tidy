@@ -1,7 +1,7 @@
 {
   "name": "template-tidy",
   "description": "Keep those templates tidy",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "homepage": "https://github.com/thepian/template-tidy",
   "main": "template-tidy.js",
   "author": {
@@ -15,6 +15,7 @@
   "bugs": {
     "url": "https://github.com/thepian/template-tidy/issues"
   },
+  "license": "MIT",
   "licenses": [
     {
       "type": "MIT",
@@ -36,7 +37,7 @@
     "colors": "^1.1.2",
     "debug": "^2.2.0",
     "flat": "^1.2.0",
-    "globe": "^0.3.0",
+    "glob": "~7.0",
     "json-stable-stringify": "^1.0.0",
     "lodash": "~2.4.1",
     "pofile": "^0.2.12"
