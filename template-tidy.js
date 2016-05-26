@@ -191,8 +191,9 @@ exports.existingTranslations = function() {
 
         found.unknownPrefix = !found.knownPrefix ? keyParts.length>1 : false;
         found.found = translation.isFoundKey(key);
-        found.unknown = !found.knownString; // key wasn't found at all
-        found.missing = !found.maybe; // doesn't seem to be in the right places
+        found.foundPrefix = keyParts.length>1? translation.isFoundPrefix(key) : false;
+        found.unknown = !found.knownString && !found.foundPrefix; // key wasn't found at all
+        found.missing = !found.maybe && !found.foundPrefix; // doesn't seem to be in the right places
 
         return found;
     }
