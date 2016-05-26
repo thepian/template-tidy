@@ -5,36 +5,68 @@ var Translations = require('./lib/translations.js');
 var PotAdapter = require('./lib/pot-adapter.js');
 var JsonAdapter = require('./lib/json-adapter.js');
 var stringify = require('json-stable-stringify');
+var debug = require('debug')('tidy');
 var _ = require('lodash'),
     fs = require('fs'),
     path = require('path'),
     glob = require('glob'),
-    interpolation = {startDelimiter: '{{', endDelimiter: '}}'};
-var debug = require('debug')('tidy');
+    interpolation = {startDelimiter: '{{', endDelimiter: '}}'},
+    cwd = process.cwd(),
+    lang = [],
+    nullEmpty = false,
+    namespace = false,
+    safeMode = false,
+    keyAsText = false;
+var existingJSON = {},
+    translation;
 
+function setOptions(options) {
+    interpolation = options.interpolation || {startDelimiter: '{{', endDelimiter: '}}'};
+    cwd = options.cwd || process.cwd();
+    lang = options.lang || [];
+    keyAsText = options.keyAsText || false;
 
-// Regexs that will be executed on files
-var regexs = {
-  commentSimpleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/\'((?:\\\\.|[^\'\\\\])*)\'',
-  commentDoubleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/"((?:\\\\.|[^"\\\\])*)"',
-  HtmlFilterSimpleQuote: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?\'((?:\\\\.|[^\'\\\\])*)\'\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
-  HtmlFilterDoubleQuote: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?"((?:\\\\.|[^"\\\\\])*)"\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
-  HtmlFilterTernary: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?([^?]*\\?[^:]*:[^|}]*)\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
-  HtmlDirective: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate(?:>|\\s[^>]*>)([^<]*)',
-  HtmlDirectiveSimpleQuote: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate=\'([^\']*)\'[^>]*>([^<]*)',
-  HtmlDirectiveDoubleQuote: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate="([^"]*)"[^>]*>([^<]*)',
-  HtmlDirectivePluralLast: 'translate="((?:\\\\.|[^"\\\\])*)".*angular-plural-extract="((?:\\\\.|[^"\\\\])*)"',
-  HtmlDirectivePluralFirst: 'angular-plural-extract="((?:\\\\.|[^"\\\\])*)".*translate="((?:\\\\.|[^"\\\\])*)"',
-  HtmlNgBindHtml: 'ng-bind-html="\\s*\'((?:\\\\.|[^\'\\\\])*)\'\\s*\\|\\s*translate(:.*?)?\\s*"',
-  HtmlNgBindHtmlTernary: 'ng-bind-html="\\s*([^?]*?[^:]*:[^|}]*)\\s*\\|\\s*translate(:.*?)?\\s*"',
-  JavascriptServiceSimpleQuote: '\\$translate\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
-  JavascriptServiceDoubleQuote: '\\$translate\\(\\s*"((?:\\\\.|[^"\\\\])*)"[^\\)]*\\)',
-  JavascriptServiceArraySimpleQuote: '\\$translate\\((?:\\s*(\\[\\s*(?:(?:\'(?:(?:\\.|[^.*\'\\\\])*)\')\\s*,*\\s*)+\\s*\\])\\s*)\\)',
-  JavascriptServiceArrayDoubleQuote: '\\$translate\\((?:\\s*(\\[\\s*(?:(?:"(?:(?:\\.|[^.*\'\\\\])*)")\\s*,*\\s*)+\\s*\\])\\s*)\\)',
-  JavascriptServiceInstantSimpleQuote: '\\$translate\\.instant\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
-  JavascriptServiceInstantDoubleQuote: '\\$translate\\.instant\\(\\s*"((?:\\\\.|[^"\\\\])*)"[^\\)]*\\)',
-  JavascriptFilterSimpleQuote: '\\$filter\\(\\s*\'translate\'\\s*\\)\\s*\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
-  JavascriptFilterDoubleQuote: '\\$filter\\(\\s*"translate"\\s*\\)\\s*\\(\\s*"((?:\\\\.|[^"\\\\\])*)"[^\\)]*\\)'
+    nullEmpty = options.nullEmpty || false;
+    namespace = options.namespace || false;
+    safeMode = options.safeMode ? true : false;
+
+    if (options.angularJSON) {
+        existingJSON = {};
+        lang.forEach(function(lang) {
+            existingJSON[lang] = [];
+            options.angularJSON.forEach(function(json) {
+                existingJSON[lang].push(path.join(cwd,json.replace('*',lang)));
+            });
+        });
+    }
+}
+
+var regexs_html = {
+    commentSimpleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/\'((?:\\\\.|[^\'\\\\])*)\'',
+    commentDoubleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/"((?:\\\\.|[^"\\\\])*)"',
+    HtmlFilterSimpleQuote: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?\'((?:\\\\.|[^\'\\\\])*)\'\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
+    HtmlFilterDoubleQuote: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?"((?:\\\\.|[^"\\\\\])*)"\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
+    HtmlFilterTernary: escapeRegExp(interpolation.startDelimiter) + '\\s*(?:::)?([^?]*\\?[^:]*:[^|}]*)\\s*\\|\\s*translate(:.*?)?\\s*' + escapeRegExp(interpolation.endDelimiter),
+    HtmlDirective: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate(?:>|\\s[^>]*>)([^<]*)',
+    HtmlDirectiveSimpleQuote: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate=\'([^\']*)\'[^>]*>([^<]*)',
+    HtmlDirectiveDoubleQuote: '<(?:[^>"]|"(?:[^"]|\\/")*")*\\stranslate="([^"]*)"[^>]*>([^<]*)',
+    HtmlDirectivePluralLast: 'translate="((?:\\\\.|[^"\\\\])*)".*angular-plural-extract="((?:\\\\.|[^"\\\\])*)"',
+    HtmlDirectivePluralFirst: 'angular-plural-extract="((?:\\\\.|[^"\\\\])*)".*translate="((?:\\\\.|[^"\\\\])*)"',
+    HtmlNgBindHtml: 'ng-bind-html="\\s*\'((?:\\\\.|[^\'\\\\])*)\'\\s*\\|\\s*translate(:.*?)?\\s*"',
+    HtmlNgBindHtmlTernary: 'ng-bind-html="\\s*([^?]*?[^:]*:[^|}]*)\\s*\\|\\s*translate(:.*?)?\\s*"'
+};
+
+var regexs_js = {
+    commentSimpleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/\'((?:\\\\.|[^\'\\\\])*)\'',
+    commentDoubleQuote: '\\/\\*\\s*i18nextract\\s*\\*\\/"((?:\\\\.|[^"\\\\])*)"',
+    JavascriptServiceSimpleQuote: '\\$translate\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
+    JavascriptServiceDoubleQuote: '\\$translate\\(\\s*"((?:\\\\.|[^"\\\\])*)"[^\\)]*\\)',
+    JavascriptServiceArraySimpleQuote: '\\$translate\\((?:\\s*(\\[\\s*(?:(?:\'(?:(?:\\.|[^.*\'\\\\])*)\')\\s*,*\\s*)+\\s*\\])\\s*)\\)',
+    JavascriptServiceArrayDoubleQuote: '\\$translate\\((?:\\s*(\\[\\s*(?:(?:"(?:(?:\\.|[^.*\'\\\\])*)")\\s*,*\\s*)+\\s*\\])\\s*)\\)',
+    JavascriptServiceInstantSimpleQuote: '\\$translate\\.instant\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
+    JavascriptServiceInstantDoubleQuote: '\\$translate\\.instant\\(\\s*"((?:\\\\.|[^"\\\\])*)"[^\\)]*\\)',
+    JavascriptFilterSimpleQuote: '\\$filter\\(\\s*\'translate\'\\s*\\)\\s*\\(\\s*\'((?:\\\\.|[^\'\\\\])*)\'[^\\)]*\\)',
+    JavascriptFilterDoubleQuote: '\\$filter\\(\\s*"translate"\\s*\\)\\s*\\(\\s*"((?:\\\\.|[^"\\\\\])*)"[^\\)]*\\)'
 };
 
 // customRegex = _.isArray(options.customRegex) || _.isObject(options.customRegex) ? options.customRegex : [],
@@ -46,42 +78,21 @@ var regexs = {
 //   }
 // });
 
-for(var rk in regexs) {
-    regexs[rk] = new RegExp(regexs[rk], "gi");
+for(var rk in regexs_js) {
+    regexs_js[rk] = new RegExp(regexs_js[rk], "gi");
 }
+for(var rk in regexs_html) {
+    regexs_html[rk] = new RegExp(regexs_html[rk], "gi");
+}
+
+var templates = [];
+var js = [];
 
 /**
  * Returns the findings in the source code
  */
-exports.scanSource = function() {
-
-};
-
-exports.unusedTranslations = function(options,done) {
-
-    interpolation = options.interpolation || {startDelimiter: '{{', endDelimiter: '}}'};
-
-    var cwd = options.cwd || process.cwd(),
-        lang = options.lang || [],
-        nullEmpty = options.nullEmpty || false,
-        namespace = options.namespace || false,
-        safeMode = options.safeMode ? true : false,
-        existingJSON = {};
-
-    if (options.angularJSON) {
-        lang.forEach(function(lang) {
-            existingJSON[lang] = [];
-            options.angularJSON.forEach(function(json) {
-                existingJSON[lang].push(path.join(cwd,json.replace('*',lang)));
-            });
-        });
-    }
-    if (options.angularJSON) options.angularJSON.forEach(function(json) {
-        lang.forEach(function(lang) {
-        });
-    });
-
-    var templates = [];
+exports.scanSource = function(options) {
+    setOptions(options);
 
     options.templates.forEach(function(pattern) {
         glob.sync(pattern, {cwd:cwd}).forEach(function(path) {
@@ -90,16 +101,19 @@ exports.unusedTranslations = function(options,done) {
         });
     });
 
-    var js = [];
-
     options.js.forEach(function(pattern) {
         glob.sync(pattern, {cwd:cwd}).forEach(function(path) {
             var content = fs.readFileSync(path,'utf8');
             js.push(content);
         });
     });
+};
 
-    console.info('translations:',Object.keys(existingJSON), 'templates:', templates.length, 'js:', js.length);
+exports.getStatsLines = function() {
+    return translation.getStatsLines();
+};
+
+exports.existingTranslations = function() {
 
     // var files = _file.expand(this.data.src),
     //   dest = this.data.dest || '.',
@@ -110,54 +124,75 @@ exports.unusedTranslations = function(options,done) {
     //   prefix = this.data.prefix || '',
     //   suffix = this.data.suffix,
     //   stringify_options = this.data.stringifyOptions || null,
-    //   keyAsText = this.data.keyAsText || false,
     //   adapter = this.data.adapter || 'json';
 
     // Parse all extra files to extra
 
 
     // Create translation object
-    var _translation = new Translations({
+    translation = new Translations({
       "safeMode": safeMode,
       "tree": namespace,
       "nullEmpty": nullEmpty,
       "existing": existingJSON
     });
 
-    var missing = [];
+    var results = {};
 
-    _translation.forAllExisting(function(key,config) {
+    templates.forEach(function(content) {
+        identifyKeys(content, regexs_html, results);
+    });
+    js.forEach(function(content) {
+        identifyKeys(content, regexs_js, results);
+    });
+
+    translation.setFoundKeys(results);
+    translation._stats.templateFiles = templates.length;
+    translation._stats.jsFiles = js.length;
+    translation._stats.lang = Object.keys(existingJSON).join(" ");
+    translation._stats.total = Object.keys(translation.existing.all).length;
+
+    var all = [], missing = 0;
+
+    translation.forAllExisting(function(key,config) {
+        config.key = key;
         config.found = foundKey(key);
+        all.push(config);
         // unknown vs missing vs maybe
-        if (config.found.unknown) {
-            missing.push(key);
+        if (config.found.missing) {
+            ++missing;
         }
     });
 
-    console.info('Total:', Object.keys(_translation.existing.all).length, 'Missing:', missing.length);
+    translation._stats.missing = missing;
 
-    return missing;
+    return all;
 
     function foundKey(key) {
         var found = { maybe: false, found: false, missing:true },
             prefix = key.split('.')[0] + '.';
 
         templates.forEach(function(content) {
-            if (content.indexOf(key) >= 0) found.knownKey = true;
+            if (content.indexOf(key) >= 0) found.knownString = true;
             if (content.indexOf('>'+ key +'<') >= 0 ||
                 content.indexOf('"'+ key +'"') >= 0 ||
                 content.indexOf(key) >= 0 ||
                 content.indexOf("'"+ key +"'") >= 0) found.maybe = true;
         });
         js.forEach(function(content) {
-            if (content.indexOf(key) >= 0) found.knownKey = true;
+            if (content.indexOf(key) >= 0) found.knownString = true;
             if (content.indexOf('"'+ key +'"') >= 0 ||
                 content.indexOf("'"+ key +"'") >= 0) found.maybe = true;
         });
 
-        found.unknown = !found.knownKey; // key wasn't found at all
+        found.found = translation.isFoundKey(key);
+        found.unknown = !found.knownString; // key wasn't found at all
         found.missing = !found.maybe; // doesn't seem to be in the right places
 
+        return found;
+    }
+
+    function identifyKeys(content, regexs, results) {
         // Execute all regex defined at the top of this file
         for (var i in regexs) {
           switch (i) {
@@ -178,17 +213,13 @@ exports.unusedTranslations = function(options,done) {
                     _extractTranslation(i, regexs[i], matches[index], results);
                   }
                 }
-
               }
               break;
             // Others regex
             default:
               _extractTranslation(i, regexs[i], content, results);
-
           }
         }
-
-        return found;
     }
 /*
     // Prepare some params to pass to the adapter
@@ -206,12 +237,12 @@ exports.unusedTranslations = function(options,done) {
       case 'pot':
         var toPot = new PotAdapter(grunt);
         toPot.init(params);
-        _translation.persist(toPot);
+        translation.persist(toPot);
         break;
       default:
         var toJson = new JsonAdapter(grunt);
         toJson.init(params);
-        _translation.persist(toJson);
+        translation.persist(toJson);
     };
 */
 };
@@ -221,12 +252,29 @@ function escapeRegExp(str) {
     return str.replace(/[\-\[\]\/\{\}\(\)\*\+\?\.\\\^\$\|]/g, "\\$&");
 }
 
+function _extractTernaryKey(key) {
+  var delimiterRegexp = new RegExp('(' + escapeRegExp(interpolation.startDelimiter) + ')|(' + escapeRegExp(interpolation.endDelimiter) + ')', 'g')
+  var ternarySimpleQuoteRegexp = new RegExp('([^?]*)\\?(?:\\s*\'((?:\\\\.|[^\'\\\\])*)\'\\s*):\\s*\'((?:\\\\.|[^\'\\\\])*)\'\\s*')
+  var ternaryDoubleQuoteRegexp = new RegExp('([^?]*)\\?(?:\\s*"((?:\\\\.|[^"\\\\])*)"\\s*):\\s*"((?:\\\\.|[^"\\\\])*)"\\s*')
+
+  var cleanKey = key.replace(delimiterRegexp, '');
+  var match = cleanKey.match(ternaryDoubleQuoteRegexp);
+  if (!match) {
+    match = cleanKey.match(ternarySimpleQuoteRegexp);
+  }
+
+  if (match && match.length > 3) {
+    return [match[2], match[3]]
+  }
+  return null
+}
+
 // Extract regex strings from content and feed results object
 function _extractTranslation(regexName, regex, content, results) {
   var r;
-  _log.debug("---------------------------------------------------------------------------------------------------");
-  _log.debug('Process extraction with regex : "' + regexName + '"');
-  _log.debug(regex);
+  debug("---------------------------------------------------------------------------------------------------");
+  debug('Process extraction with regex : "' + regexName + '"');
+  debug(regex);
   regex.lastIndex = 0;
   while ((r = regex.exec(content)) !== null) {
 
@@ -303,11 +351,11 @@ function _extractTranslation(regexName, regex, content, results) {
       }
 
       // Check for customRegex
-      if (_.isObject(customRegex) && !_.isArray(customRegex) && customRegex.hasOwnProperty(regexName)) {
-        if (_.isFunction(customRegex[regexName])) {
-          translationKey = customRegex[regexName](translationKey) || translationKey;
-        }
-      }
+    //   if (_.isObject(customRegex) && !_.isArray(customRegex) && customRegex.hasOwnProperty(regexName)) {
+    //     if (_.isFunction(customRegex[regexName])) {
+    //       translationKey = customRegex[regexName](translationKey) || translationKey;
+    //     }
+    //   }
 
       // Store the translationKey with the value into results
       function defaultValueByTranslationKey(translationKey, translationDefaultValue) {
