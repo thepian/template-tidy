@@ -1,5 +1,3 @@
-'use strict';
-
 require('colors');
 
 var Translations = require('./lib/translations.js');
